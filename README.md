@@ -16,12 +16,12 @@ flowchart LR
 
     subgraph RAG["Retrieval-Augmented Generation"]
         direction TB
-        SPLIT["RecursiveCharacterTextSplitter<br/>chunk 100 / overlap 20<br/>→ 468 chunks"]
+        SPLIT["Markdown header split +<br/>RecursiveCharacterTextSplitter<br/>chunk 600 / overlap 100"]
         EMB["all-MiniLM-L6-v2<br/>embeddings"]
         FAISS[("FAISS index")]
-        BASIC["Basic RAG<br/>top-2 similarity"]
+        BASIC["Basic RAG<br/>top-3 similarity"]
         TOP10["top-10 similarity"]
-        RERANK["CrossEncoder rerank<br/>ms-marco-MiniLM-L-6-v2<br/>→ top-2"]
+        RERANK["CrossEncoder rerank<br/>ms-marco-MiniLM-L-6-v2<br/>→ top-3"]
         SPLIT --> EMB --> FAISS
         FAISS --> BASIC
         FAISS --> TOP10 --> RERANK
@@ -46,21 +46,27 @@ flowchart LR
     DORA -- "query only" --> GEN
     BASE -.->|same base model| GEN
 
-    GEN --> EVAL["Evaluation<br/>ROUGE-L F1 + semantic similarity"]
+    GEN --> EVAL["Evaluation<br/>fact recall, ROUGE-L, semantic similarity<br/>+ Claude LLM judge"]
 ```
 
 ## Approaches compared
 
 | Method | How knowledge reaches the model | Key settings |
 |---|---|---|
-| **Basic RAG** | Top-2 chunks from FAISS go into the prompt | MiniLM embeddings, `k=2` |
-| **Advanced RAG** | Two-stage retrieval: top-10 vector hits, reranked by a cross-encoder, top-2 kept | `ms-marco-MiniLM-L-6-v2` reranker |
+| **Basic RAG** | Top-3 chunks from FAISS go into the prompt | MiniLM embeddings, `k=3` |
+| **Advanced RAG** | Two-stage retrieval: top-10 vector hits, reranked by a cross-encoder, top-3 kept | `ms-marco-MiniLM-L-6-v2` reranker |
 | **LoRA FT** | Low-rank adapters trained on Q&A pairs | `r=16`, `q/k/v/o_proj`, ~10.1M trainable params (0.13%) |
 | **DoRA FT** | Weight-decomposed LoRA (magnitude + direction) | `r=16`, attention + `gate/up/down_proj`, ~41.8M trainable params (0.55%) |
 
 The notebook also demonstrates **multi-query retrieval**: it searches several rephrasings of the query and de-duplicates the results. This retriever isn't used in the evaluation.
 
+## Evaluation
+
+Each method answers a held-out set of paraphrased and unseen-supplement questions. Answers are scored with key-fact recall, ROUGE-L F1, and embedding similarity. ROUGE-L rewards copying the reference wording, which favours the fine-tuned models, so Claude also grades every answer blind (it never sees the method name) for correctness, completeness, and, for RAG, faithfulness to the retrieved context. The judge cell needs an `ANTHROPIC_API_KEY` in Colab Secrets and is skipped without one.
+
 ## Results
+
+> These numbers come from an earlier single-query version of the notebook. They predate the held-out eval set, the new chunking, and the LLM judge, so re-run the notebook for current figures.
 
 Query: *"What are the primary benefits and forms of Magnesium?"*
 
