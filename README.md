@@ -6,15 +6,6 @@ A side-by-side experiment that teaches **Qwen2.5-7B-Instruct** a niche knowledge
 
 ---
 
-## Overview
-
-There are two common ways to give an LLM domain knowledge:
-
-- **RAG** keeps the model frozen. Relevant chunks of a knowledge base are retrieved and placed into the prompt.
-- **Fine-tuning** updates (a small part of) the model's weights so it answers from memory.
-
-The domain here is a long-form guide to **dietary supplements**: micronutrients, fatty acids, gut health, herbal adaptogens, amino acids, antioxidants, joint health, sleep and mood. The notebook builds two RAG pipelines and two parameter-efficient fine-tunes on the same 4-bit base model. It then asks all four the same question.
-
 ## Pipeline
 
 ```mermaid
