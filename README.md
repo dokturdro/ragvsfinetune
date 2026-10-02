@@ -11,12 +11,12 @@ A side-by-side experiment that teaches **Qwen2.5-7B-Instruct** a niche knowledge
 ```mermaid
 flowchart LR
     KB["supplements_data.txt<br/>(supplement guide)"]
-    QA["4 instruction / output<br/>Q&A pairs"]
+    QA["20 instruction / output<br/>Q&A pairs"]
     BASE["Qwen2.5-7B-Instruct<br/>4-bit (Unsloth)"]
 
     subgraph RAG["Retrieval-Augmented Generation"]
         direction TB
-        SPLIT["Markdown header split +<br/>RecursiveCharacterTextSplitter<br/>chunk 600 / overlap 100"]
+        SPLIT["Markdown header split +<br/>RecursiveCharacterTextSplitter<br/>chunk 600 / overlap 100<br/>→ 78 chunks"]
         EMB["all-MiniLM-L6-v2<br/>embeddings"]
         FAISS[("FAISS index")]
         BASIC["Basic RAG<br/>top-3 similarity"]
@@ -44,7 +44,8 @@ flowchart LR
     RERANK -- "context + query" --> GEN
     LORA -- "query only" --> GEN
     DORA -- "query only" --> GEN
-    BASE -.->|same base model| GEN
+    DORA -- "reranked context + query" --> GEN
+    BASE -.->|"no context (baseline)"| GEN
 
     GEN --> EVAL["Evaluation<br/>fact recall, ROUGE-L, semantic similarity<br/>+ LLM judge (Llama 3.1 8B via Ollama)"]
 ```
@@ -53,33 +54,50 @@ flowchart LR
 
 | Method | How knowledge reaches the model | Key settings |
 |---|---|---|
+| **Base (no context)** | Nothing extra; measures what the model already knows | Base model, no adapter |
 | **Basic RAG** | Top-3 chunks from FAISS go into the prompt | MiniLM embeddings, `k=3` |
 | **Advanced RAG** | Two-stage retrieval: top-10 vector hits, reranked by a cross-encoder, top-3 kept | `ms-marco-MiniLM-L-6-v2` reranker |
 | **LoRA FT** | Low-rank adapters trained on Q&A pairs | `r=16`, `q/k/v/o_proj`, ~10.1M trainable params (0.13%) |
 | **DoRA FT** | Weight-decomposed LoRA (magnitude + direction) | `r=16`, attention + `gate/up/down_proj`, ~41.8M trainable params (0.55%) |
-
-The notebook also demonstrates **multi-query retrieval**: it searches several rephrasings of the query and de-duplicates the results. This retriever isn't used in the evaluation.
-
-## Evaluation
-
-Each method answers a held-out set of paraphrased and unseen-supplement questions. Answers are scored with key-fact recall, ROUGE-L F1, and embedding similarity. ROUGE-L rewards copying the reference wording, which favours the fine-tuned models, so a local Llama 3.1 8B judge (via Ollama, a different model family from the Qwen models being graded) also grades every answer blind (it never sees the method name) for correctness, completeness, and, for RAG, faithfulness to the retrieved context. The judge cell installs and starts Ollama if no server is reachable; set `OLLAMA_HOST` to use an existing one.
+| **DoRA FT + RAG** | DoRA model, with the Advanced RAG context added to the prompt | Same as DoRA FT and Advanced RAG |
 
 ## Results
 
-> These numbers come from an earlier single-query version of the notebook. They predate the held-out eval set, the new chunking, and the LLM judge, so re-run the notebook for current figures.
+**Overall (both buckets, 12 questions):**
 
-Query: *"What are the primary benefits and forms of Magnesium?"*
+| Method | Fact recall | Semantic sim | ROUGE-L | Judge correct | Judge complete | Judge faithful |
+|---|---:|---:|---:|---:|---:|---:|
+| Base (no context) | 0.472 | 0.763 | 0.138 | 0.958 | 0.833 | – |
+| Basic RAG | **0.903** | 0.827 | 0.182 | 0.938 | 0.854 | 0.917 |
+| Advanced RAG | **0.903** | 0.811 | 0.192 | **0.979** | **0.896** | 0.917 |
+| LoRA FT | 0.653 | 0.789 | 0.272 | 0.833 | 0.625 | – |
+| DoRA FT | 0.694 | 0.793 | 0.320 | 0.896 | 0.833 | – |
+| DoRA FT + RAG | 0.889 | **0.839** | **0.374** | 0.896 | 0.729 | **0.979** |
 
-| Method | ROUGE-L F1 | Semantic Similarity |
+**Fact recall by bucket:**
+
+| Method | Paraphrased | Unseen |
 |---|---:|---:|
-| Basic RAG | 0.3307 | 0.7691 |
-| Advanced RAG | 0.2313 | 0.8313 |
-| LoRA FT | 0.6341 | 0.9196 |
-| DoRA FT | **0.9041** | **0.9562** |
+| Base (no context) | 0.472 | 0.472 |
+| Basic RAG | 0.861 | **0.944** |
+| Advanced RAG | 0.861 | **0.944** |
+| LoRA FT | 0.694 | 0.611 |
+| DoRA FT | 0.833 | 0.556 |
+| DoRA FT + RAG | **0.917** | 0.861 |
 
-Training summary (Tesla T4):
+Retrieval hit rate was 1.0 for every RAG method in both buckets: the retrieved context always contained every key fact.
 
-| Run | Final train loss | Runtime |
+Takeaways:
+
+- **RAG gets the facts right.** Basic and Advanced RAG reach about 0.90 fact recall, against 0.65–0.69 for the fine-tuned models. On unseen supplements, which fine-tuning cannot have learned, the gap is widest (0.94 vs 0.56–0.61).
+- **Fine-tuning learns the answer style.** The fine-tuned models score highest on ROUGE-L, and DoRA beats the base model on paraphrased questions (0.83 vs 0.47 fact recall). On unseen supplements, DoRA's fact recall (0.556) is close to the base model's (0.472).
+- **The hybrid scores well on the automatic metrics.** DoRA FT + RAG has the best paraphrased fact recall, semantic similarity, ROUGE-L and faithfulness. However, the judge rates its unseen-bucket answers as less complete (0.625).
+- **The judge is lenient on correctness.** It gives the base model 0.958 correctness despite 0.472 fact recall. The base model gives plausible general answers that don't contradict the reference but leave out the specific facts. Completeness and fact recall separate the methods better.
+- **LoRA is the weakest method on every judge score.** It trains only the attention layers, while DoRA also trains the MLP layers.
+
+Training summary (Tesla T4, 20 examples, 60 steps / 20 epochs):
+
+| Run | Loss at step 60 | Runtime |
 |---|---:|---:|
-| LoRA | 0.020 | ~2 min |
-| DoRA | 0.193 | ~10 min |
+| LoRA | 0.549 | ~3.5 min |
+| DoRA | 0.047 | ~17 min |
