@@ -46,7 +46,7 @@ flowchart LR
     DORA -- "query only" --> GEN
     BASE -.->|same base model| GEN
 
-    GEN --> EVAL["Evaluation<br/>fact recall, ROUGE-L, semantic similarity<br/>+ Claude LLM judge"]
+    GEN --> EVAL["Evaluation<br/>fact recall, ROUGE-L, semantic similarity<br/>+ LLM judge (Llama 3.1 8B via Ollama)"]
 ```
 
 ## Approaches compared
@@ -62,7 +62,7 @@ The notebook also demonstrates **multi-query retrieval**: it searches several re
 
 ## Evaluation
 
-Each method answers a held-out set of paraphrased and unseen-supplement questions. Answers are scored with key-fact recall, ROUGE-L F1, and embedding similarity. ROUGE-L rewards copying the reference wording, which favours the fine-tuned models, so Claude also grades every answer blind (it never sees the method name) for correctness, completeness, and, for RAG, faithfulness to the retrieved context. The judge cell needs an `ANTHROPIC_API_KEY` in Colab Secrets and is skipped without one.
+Each method answers a held-out set of paraphrased and unseen-supplement questions. Answers are scored with key-fact recall, ROUGE-L F1, and embedding similarity. ROUGE-L rewards copying the reference wording, which favours the fine-tuned models, so a local Llama 3.1 8B judge (via Ollama, a different model family from the Qwen models being graded) also grades every answer blind (it never sees the method name) for correctness, completeness, and, for RAG, faithfulness to the retrieved context. The judge cell installs and starts Ollama if no server is reachable; set `OLLAMA_HOST` to use an existing one.
 
 ## Results
 
